@@ -1,0 +1,780 @@
+Media Over QUIC                                                 E. Herz
+Internet-Draft                                              Vivoh, Inc.
+Intended status: Informational                              5 April 2026
+Expires: 7 October 2026
+
+
+   NMSF - Neural Video Codec Packaging for MOQT Streaming Format
+                        draft-herz-moq-nmsf-00
+
+Abstract
+
+   This document updates [MSF] by defining a new optional feature for
+   the streaming format.  It specifies the syntax and semantics for
+   adding Neural Video Codec (NVC) packaged media to MSF.  NVC codecs
+   use learned neural network transforms for video compression, and
+   their bitstreams require a distinct packaging model from traditional
+   block-based codecs.  NMSF maps neural keyframes (Intra) and delta
+   frames (Inter) onto MoQ Groups and Objects, enabling real-time
+   neural video streaming over any standard MoQ relay.
+
+About This Document
+
+   This note is to be removed before publishing as an RFC.
+
+   Source for this draft and an issue tracker can be found at
+   https://github.com/erikherz/nmsf.
+
+   Discussion of this document takes place on the Media Over QUIC
+   Working Group mailing list (mailto:moq@ietf.org), which is archived
+   at https://mailarchive.ietf.org/arch/browse/moq/.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 7 October 2026.
+
+
+
+
+
+
+
+
+Herz                     Expires 7 October 2026                 [Page 1]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . .   2
+   2.  MSF Extension . . . . . . . . . . . . . . . . . . . . . . .   4
+   3.  NVC Packaging  . . . . . . . . . . . . . . . . . . . . . . .   4
+     3.1.  Object Wire Format  . . . . . . . . . . . . . . . . . .   4
+     3.2.  Frame Types . . . . . . . . . . . . . . . . . . . . . .   5
+     3.3.  Object Packaging  . . . . . . . . . . . . . . . . . . .   6
+     3.4.  Group Packaging . . . . . . . . . . . . . . . . . . . .   6
+     3.5.  Payload Format  . . . . . . . . . . . . . . . . . . . .   6
+     3.6.  Catalog Description . . . . . . . . . . . . . . . . . .   7
+       3.6.1.  NVC Packaging Type  . . . . . . . . . . . . . . . .   7
+       3.6.2.  NVC-specific Catalog Fields . . . . . . . . . . . .   7
+       3.6.3.  NVC Metadata Object . . . . . . . . . . . . . . . .   8
+   4.  Decoder Requirements . . . . . . . . . . . . . . . . . . .   8
+     4.1.  Context Buffer Management . . . . . . . . . . . . . . .   9
+     4.2.  Intra Frame Handling  . . . . . . . . . . . . . . . . .   9
+     4.3.  Inter Frame Handling  . . . . . . . . . . . . . . . . .   9
+     4.4.  Stream Join and Recovery  . . . . . . . . . . . . . . .   9
+     4.5.  Encoder Context Synchronization . . . . . . . . . . . .  10
+   5.  Codec Registration . . . . . . . . . . . . . . . . . . . .  10
+   6.  Catalog Examples . . . . . . . . . . . . . . . . . . . . .  11
+     6.1.  NVC video with LOC audio  . . . . . . . . . . . . . . .  11
+     6.2.  NVC video with CMAF audio . . . . . . . . . . . . . . .  12
+   7.  Conventions and Definitions . . . . . . . . . . . . . . . .  13
+   8.  Security Considerations . . . . . . . . . . . . . . . . . .  13
+   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . .  13
+   10. References  . . . . . . . . . . . . . . . . . . . . . . . .  14
+     10.1.  Normative References . . . . . . . . . . . . . . . . .  14
+     10.2.  Informative References . . . . . . . . . . . . . . . .  14
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . .  15
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . .  15
+
+
+
+
+Herz                     Expires 7 October 2026                 [Page 2]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+1.  Introduction
+
+   Neural Video Codecs (NVCs) represent a new class of video
+   compression that uses learned neural network transforms instead of
+   block-based motion estimation and discrete cosine transforms.  NVCs
+   such as DCVC-RT [DCVC-RT], SSF, FVC, and RLVC produce compressed
+   bitstreams that differ fundamentally from traditional codecs:
+
+   *  No container format.  NVC bitstreams consist of entropy-coded
+      latent tensors, not fMP4 boxes, LOC containers, or NAL units.
+
+   *  Stateful decoding.  The decoder maintains a learned context
+      buffer (analogous to a decoded picture buffer) that must be
+      initialized from a full neural keyframe before delta frames can
+      be decoded.
+
+   *  Variable-rate representations.  Compressed frame sizes vary
+      significantly based on scene complexity, as the codec allocates
+      bits adaptively in a learned feature space.
+
+   The existing MSF [MSF] packaging types -- LOC and the timeline
+   types -- do not accommodate these bitstreams.  The CMSF [CMSF]
+   extension adds CMAF packaging for traditional block-based codecs.
+   Neither is suitable for NVC data, which has no container structure
+   and requires a different model for keyframe semantics and decoder
+   state management.
+
+   This document defines NMSF, an MSF extension that adds NVC
+   packaging.  NMSF follows the same extension pattern established by
+   CMSF: it registers a new "packaging" value, defines the Object
+   payload format, and specifies Group-level requirements for decoder
+   random access.
+
+      MSF (base)
+       +-- LOC packaging          (native, [MSF])
+       +-- Media/Event timelines  (native, [MSF])
+       +-- CMSF extension         (adds "cmaf" packaging, [CMSF])
+       +-- NMSF extension         (adds "nvc" packaging, this document)
+
+   A single MoQ Broadcast MAY contain tracks using any combination of
+   packaging types.  For example, an NVC video track may coexist with
+   a LOC or CMAF audio track in the same catalog.
+
+
+
+
+
+
+
+
+Herz                     Expires 7 October 2026                 [Page 3]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+2.  MSF Extension
+
+   All of the specifications, requirements, and terminology defined in
+   [MSF] apply to implementations of this extension unless explicitly
+   noted otherwise in this document.
+
+3.  NVC Packaging
+
+3.1.  Object Wire Format
+
+   Each MoQ Object payload for a track with "nvc" packaging consists
+   of a fixed 17-byte header followed by a variable-length compressed
+   bitstream:
+
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |  frame_type   |                 frame_number                  |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |               |                    width                      |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |               |                    height                     |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |               |                 payload_len                   |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |               |                                               |
+   +-+-+-+-+-+-+-+-+          payload (variable)                   +
+   |                                                               |
+   +---------------------------------------------------------------+
+
+   frame_type:  1 byte.  The type of neural video frame contained in
+      this Object.  See Section 3.2.
+
+   frame_number:  4 bytes, unsigned 32-bit integer, big-endian.  The
+      absolute sequence number of this frame within the stream,
+      starting from zero.
+
+   width:  4 bytes, unsigned 32-bit integer, big-endian.  The frame
+      width in pixels.
+
+   height:  4 bytes, unsigned 32-bit integer, big-endian.  The frame
+      height in pixels.
+
+   payload_len:  4 bytes, unsigned 32-bit integer, big-endian.  The
+      byte length of the payload field that follows.
+
+   payload:  Variable length.  The NVC compressed bitstream for this
+      frame.  The internal structure is codec-specific and opaque to
+      the packaging layer.  See Section 3.5.
+
+
+Herz                     Expires 7 October 2026                 [Page 4]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+3.2.  Frame Types
+
+   The frame_type field identifies the role of the frame in the neural
+   codec's prediction structure.  The following values are defined:
+
+              +=========+========+========================+
+              |  Value  |  Type  | Description            |
+              +=========+========+========================+
+              |  0x00   | Intra  | Neural keyframe.       |
+              |         |        | Decoder initializes    |
+              |         |        | its context buffer     |
+              |         |        | from this frame. MUST  |
+              |         |        | be the first Object in |
+              |         |        | a Group.               |
+              +---------+--------+------------------------+
+              |  0x01   | Inter  | Neural delta frame.    |
+              |         |        | Decoder uses context   |
+              |         |        | buffer from previous   |
+              |         |        | reconstructed frame.   |
+              +---------+--------+------------------------+
+              | 0x02-FF |  Rsvd  | Reserved for future    |
+              |         |        | use.                   |
+              +---------+--------+------------------------+
+
+                                Table 1
+
+   Intra frames are analogous to SAP Type 1 access points in CMAF.
+   They enable random access by fully initializing the decoder's
+   context buffer without dependence on any prior frame.
+
+   Inter frames are analogous to non-SAP frames (P-frames).  They
+   depend on the decoder's context buffer, which contains the
+   reconstructed output of the immediately preceding frame.
+
+   Unlike traditional codecs with multi-frame reference picture
+   buffers, current NVCs maintain a single context buffer containing
+   learned features from the previous reconstructed frame.  The
+   reserved range (0x02-0xFF) accommodates future NVCs that may
+   introduce bidirectional prediction, hierarchical quality layers,
+   or multi-reference architectures.
+
+
+
+
+
+
+
+
+
+Herz                     Expires 7 October 2026                 [Page 5]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+3.3.  Object Packaging
+
+   The payload of each Object is subject to the following requirements:
+
+   *  MUST contain exactly one NVC frame in the wire format defined
+      in Section 3.1.
+
+   *  MUST NOT span multiple frames.  Each frame is carried in a
+      separate Object.
+
+   *  Objects within a Group MUST be sequentially ordered by
+      frame_number.  Out-of-order processing causes encoder-decoder
+      context buffer divergence.
+
+3.4.  Group Packaging
+
+   Each MOQT Group:
+
+   *  MUST begin with an Object containing an Intra frame
+      (frame_type = 0x00).
+
+   *  MUST contain one contiguous Group of Pictures (GOP): one Intra
+      frame followed by zero or more Inter frames.
+
+   *  The Group boundary aligns with the publisher's neural GOP
+      boundary.  Typical GOP sizes are 30-120 frames (1-4 seconds
+      at 30 fps).
+
+   This structure ensures that a subscriber joining mid-stream or
+   recovering from loss can begin decoding from the next Group
+   boundary.  The Intra frame at the start of each Group fully
+   initializes the decoder context buffer, enabling immediate
+   playback without waiting for a future keyframe.
+
+3.5.  Payload Format
+
+   The payload field of each Object contains the NVC's compressed
+   bitstream.  Its internal structure is codec-specific and opaque to
+   the NMSF packaging layer.
+
+   For NVCs using hyperprior-based entropy coding (such as DCVC-RT),
+   the following payload sub-format is RECOMMENDED:
+
+   *  hyper_bitstream_len (4 bytes, uint32 big-endian): Length of the
+      entropy-coded hyperprior side information.
+   *  hyper_bitstream (variable): Entropy-coded hyperprior z.
+   *  latent_bitstream_len (4 bytes, uint32 big-endian): Length of the
+      entropy-coded latent tensor.
+   *  latent_bitstream (variable): Entropy-coded latent y.
+   *  latent_height (4 bytes, uint32 big-endian): Spatial height of
+      the latent tensor.
+   *  latent_width (4 bytes, uint32 big-endian): Spatial width.
+   *  num_channels (4 bytes, uint32 big-endian): Channel count.
+
+
+Herz                     Expires 7 October 2026                 [Page 6]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+3.6.  Catalog Description
+
+3.6.1.  NVC Packaging Type
+
+   This specification extends the allowed packaging values defined in
+   [MSF] to include one new entry, as defined in Table 2 below:
+
+                       +======+=======+===========+
+                       | Name | Value | Reference |
+                       +======+=======+===========+
+                       | NVC  | nvc   | This RFC  |
+                       +------+-------+-----------+
+
+                                 Table 2
+
+   Every Track entry in an MSF catalog carrying NVC-packaged media
+   data MUST declare a "packaging" type value of "nvc".
+
+3.6.2.  NVC-specific Catalog Fields
+
+   This specification adds the following track-level catalog fields
+   for tracks with "nvc" packaging:
+
+   +============+===========+==========+============================+
+   | Field      | JSON Type | Required | Definition                 |
+   +============+===========+==========+============================+
+   | codec      | String    | Yes      | NVC codec identifier.      |
+   |            |           |          | See Section 5.             |
+   +------------+-----------+----------+----------------------------+
+   | colorspace | String    | Yes      | Input colorspace (e.g.,    |
+   |            |           |          | "ycbcr-bt709").            |
+   +------------+-----------+----------+----------------------------+
+   | gopSize    | Number    | Yes      | Number of frames per       |
+   |            |           |          | Group (GOP size).          |
+   +------------+-----------+----------+----------------------------+
+   | nvc        | Object    | No       | Codec-specific metadata.   |
+   |            |           |          | See Section 3.6.3.         |
+   +------------+-----------+----------+----------------------------+
+
+                                 Table 3
+
+   The standard MSF track fields "name", "packaging", "isLive",
+   "width", "height", and "framerate" retain their definitions from
+   [MSF] and are REQUIRED for NVC tracks.
+
+
+
+
+Herz                     Expires 7 October 2026                 [Page 7]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+3.6.3.  NVC Metadata Object
+
+   The optional "nvc" object within a track catalog entry carries
+   codec-specific metadata that a subscriber may need to configure
+   its decoder:
+
+   +================+===========+==================================+
+   | Field          | JSON Type | Description                      |
+   +================+===========+==================================+
+   | modelVersion   | String    | Model checkpoint version         |
+   |                |           | identifier.                      |
+   +----------------+-----------+----------------------------------+
+   | entropyFormat  | String    | Entropy coding format (e.g.,     |
+   |                |           | "rans64", "arithmetic").          |
+   +----------------+-----------+----------------------------------+
+   | latentChannels | Number    | Channel count of the latent      |
+   |                |           | tensor.                          |
+   +----------------+-----------+----------------------------------+
+   | hyperChannels  | Number    | Channel count of the hyperprior  |
+   |                |           | tensor.                          |
+   +----------------+-----------+----------------------------------+
+   | quantParams    | Object    | Codec-specific quantization      |
+   |                |           | parameters.                      |
+   +----------------+-----------+----------------------------------+
+
+                                 Table 4
+
+   Subscribers that do not recognize the "codec" value or cannot
+   satisfy the metadata requirements SHOULD NOT subscribe to the
+   track.
+
+4.  Decoder Requirements
+
+   This section specifies the behavior required of an NMSF decoder.
+   These requirements ensure that encoder and decoder context buffers
+   remain synchronized, preventing visual artifacts caused by state
+   drift.
+
+
+
+
+
+
+
+
+
+
+Herz                     Expires 7 October 2026                 [Page 8]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+4.1.  Context Buffer Management
+
+   The decoder MUST maintain a context buffer containing the
+   reconstructed output of the most recently decoded frame.  This
+   buffer is used as input to the synthesis transform when decoding
+   Inter frames.
+
+   The context buffer is uninitialized when the decoder starts.  The
+   decoder MUST NOT attempt to decode Inter frames until it has
+   successfully decoded an Intra frame.
+
+   After decoding each frame (Intra or Inter), the decoder MUST
+   replace its context buffer with the newly reconstructed output.
+   Failure to update the context buffer causes progressive drift
+   between encoder and decoder state, manifesting as visual artifacts
+   commonly described as "ghosting" or "smearing."
+
+4.2.  Intra Frame Handling
+
+   When the decoder receives an Intra frame (frame_type = 0x00):
+
+   1.  Discard any existing context buffer.
+   2.  Decode the frame using only the payload data (no context).
+   3.  Store the reconstructed output as the new context buffer.
+   4.  Output the reconstructed frame for display.
+
+4.3.  Inter Frame Handling
+
+   When the decoder receives an Inter frame (frame_type = 0x01):
+
+   1.  Verify that a context buffer exists (i.e., an Intra frame has
+       been previously decoded).  If not, discard the frame.
+   2.  Decode the frame using the payload AND the current context
+       buffer.
+   3.  Replace the context buffer with the newly reconstructed output.
+   4.  Output the reconstructed frame for display.
+
+4.4.  Stream Join and Recovery
+
+   When a subscriber joins a stream mid-session or recovers from
+   packet loss:
+
+   1.  Wait for the start of the next MoQ Group.
+   2.  The first Object in the Group is an Intra frame.
+   3.  Decode the Intra frame to initialize the context buffer.
+   4.  Continue decoding subsequent Inter frames normally.
+
+   Objects received before the first Intra frame MUST be discarded.
+
+
+Herz                     Expires 7 October 2026                 [Page 9]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+4.5.  Encoder Context Synchronization
+
+   The encoder MUST maintain its own context buffer that mirrors the
+   decoder's state.  After encoding each frame, the encoder MUST run
+   the synthesis (decoding) transform on the quantized latent
+   representation to produce a reconstructed frame, and use that
+   reconstructed frame as the context for encoding the next frame.
+
+   This "encode-decode loop" ensures that the encoder's context buffer
+   contains exactly the same data that a decoder would produce from
+   the transmitted bitstream, preventing encoder-decoder state drift.
+
+5.  Codec Registration
+
+   The "codec" field in the catalog identifies which NVC is used.
+   The following identifiers are defined by this document:
+
+   +===========+==========================================+===========+
+   | Value     | Full Name                                | Reference |
+   +===========+==========================================+===========+
+   | dcvc-rt   | Deep Contextual Video Compression -      | [DCVC-RT] |
+   |           | Real Time                                |           |
+   +-----------+------------------------------------------+-----------+
+   | dcvc-fm   | DCVC Feature Modulation                  |           |
+   +-----------+------------------------------------------+-----------+
+   | dcvc-dc   | DCVC Data Conditions                     |           |
+   +-----------+------------------------------------------+-----------+
+   | ssf       | Scale-Space Flow                         |           |
+   +-----------+------------------------------------------+-----------+
+   | fvc       | Feature-space Video Coding               |           |
+   +-----------+------------------------------------------+-----------+
+   | rlvc      | Recurrent Learned Video Compression      |           |
+   +-----------+------------------------------------------+-----------+
+   | elfvc     | Efficient Learned Flexible Video Coding   |           |
+   +-----------+------------------------------------------+-----------+
+
+                                 Table 5
+
+   New NVC codecs are compatible with NMSF packaging if they produce
+   distinct Intra and Inter frame types and use a single sequential
+   context buffer.  Registration requires choosing a unique codec
+   identifier string and documenting the payload sub-format
+   (Section 3.5).  No changes to the wire format header
+   (Section 3.1) are required for new codecs.
+
+
+
+
+Herz                     Expires 7 October 2026                [Page 10]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+6.  Catalog Examples
+
+   The following section provides non-normative JSON examples of
+   catalogs compliant with this draft.
+
+6.1.  NVC video with LOC audio
+
+   This example shows a catalog for a live broadcast with one DCVC-RT
+   neural video track and one Opus audio track using MSF's native LOC
+   packaging.
+
+   {
+     "version": 1,
+     "streamingFormat": 1,
+     "streamingFormatVersion": "0.1",
+     "tracks": [
+       {
+         "name": "video",
+         "packaging": "nvc",
+         "isLive": true,
+         "codec": "dcvc-rt",
+         "role": "video",
+         "width": 1280,
+         "height": 720,
+         "framerate": 30,
+         "colorspace": "ycbcr-bt709",
+         "gopSize": 60,
+         "nvc": {
+           "modelVersion": "cvpr2025",
+           "entropyFormat": "rans64",
+           "latentChannels": 128,
+           "hyperChannels": 128
+         }
+       },
+       {
+         "name": "audio",
+         "packaging": "loc",
+         "isLive": true,
+         "codec": "opus",
+         "role": "audio",
+         "samplerate": 48000,
+         "channelConfig": "2",
+         "bitrate": 128000
+       }
+     ]
+   }
+
+
+
+Herz                     Expires 7 October 2026                [Page 11]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+6.2.  NVC video with CMAF audio
+
+   This example shows a catalog mixing NVC packaging (video) with
+   CMSF's CMAF packaging (audio) in a single broadcast.  This
+   demonstrates interoperability between NMSF and CMSF extensions.
+
+   {
+     "version": 1,
+     "tracks": [
+       {
+         "name": "video",
+         "packaging": "nvc",
+         "isLive": true,
+         "codec": "dcvc-rt",
+         "role": "video",
+         "width": 1920,
+         "height": 1080,
+         "framerate": 30,
+         "colorspace": "ycbcr-bt709",
+         "gopSize": 60,
+         "nvc": {
+           "modelVersion": "cvpr2025",
+           "entropyFormat": "rans64",
+           "latentChannels": 128,
+           "hyperChannels": 128
+         }
+       },
+       {
+         "name": "audio",
+         "packaging": "cmaf",
+         "isLive": true,
+         "initData": "AAAAIGZ0eXBpc281AAA...AAAAAAAAAA",
+         "codec": "mp4a.40.2",
+         "role": "audio",
+         "samplerate": 48000,
+         "channelConfig": "2",
+         "bitrate": 128000
+       }
+     ]
+   }
+
+
+
+
+
+
+
+
+
+Herz                     Expires 7 October 2026                [Page 12]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+7.  Conventions and Definitions
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+8.  Security Considerations
+
+   NMSF relies on the security properties of MoQ Transport
+   [MoQTransport], which provides confidentiality and integrity via
+   QUIC's TLS 1.3 encryption.  NMSF does not add its own integrity
+   or authentication mechanisms.
+
+   The "payload_len" field permits payloads up to 4 GiB.  Decoders
+   SHOULD enforce a maximum payload size appropriate for their
+   deployment environment (e.g., 100 MiB for 4K video) and reject
+   Objects exceeding that limit to mitigate resource exhaustion.
+
+   A malicious publisher could craft Intra frames that cause the
+   decoder's context buffer to enter a state producing misleading
+   visual output on subsequent Inter frames.  This is analogous to
+   reference picture manipulation in traditional codecs and is
+   mitigated by the same trust model: subscribers SHOULD only
+   connect to authenticated and authorized publishers.
+
+   Neural video codec model weights are typically large (tens to
+   hundreds of megabytes) and are NOT transmitted via MoQ.  Both
+   publisher and subscriber must have compatible model weights
+   pre-installed.  The "nvc" catalog metadata (Section 3.6.3)
+   enables version negotiation, but the secure distribution of model
+   weights is outside the scope of this document.
+
+9.  IANA Considerations
+
+   This document requests registration of a new packaging type value
+   "nvc" in the MSF packaging registry defined by [MSF].
+
+   This document requests creation of an "NVC Codec Identifiers"
+   registry with the initial values defined in Table 5 of Section 5.
+   New entries require Specification Required registration policy.
+
+
+
+
+
+
+Herz                     Expires 7 October 2026                [Page 13]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+10.  References
+
+10.1.  Normative References
+
+   [MSF]      Law, W., "MOQT Streaming Format", Work in Progress,
+              Internet-Draft, draft-ietf-moq-msf-00, January 2026,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-moq-
+              msf-00>.
+
+   [CMSF]     Law, W., "CMSF - a CMAF compliant implementation of
+              MOQT Streaming Format", Work in Progress, Internet-
+              Draft, draft-ietf-moq-cmsf-00, December 2025,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-moq-
+              cmsf-00>.
+
+   [MoQTransport]
+              Curley, L., Pugin, K., Nandakumar, S., Vasiliev, V., and
+              I. Swett, "Media over QUIC Transport", Work in Progress,
+              Internet-Draft, draft-ietf-moq-transport-17,
+              <https://datatracker.ietf.org/doc/html/draft-ietf-moq-
+              transport-17>.
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/rfc/rfc2119>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017,
+              <https://www.rfc-editor.org/rfc/rfc8174>.
+
+10.2.  Informative References
+
+   [DCVC-RT]  Microsoft Research, "Towards Practical Real-Time Neural
+              Video Compression", CVPR 2025.
+
+   [CompressAI]
+              InterDigital, "CompressAI: A PyTorch Library and
+              Evaluation Platform for End-to-end Compression Research",
+              <https://github.com/InterDigitalInc/CompressAI>.
+
+   [BT.709]   ITU-R, "Parameter values for the HDTV standards for
+              production and international programme exchange",
+              Recommendation BT.709-6, June 2015.
+
+
+
+
+Herz                     Expires 7 October 2026                [Page 14]
+
+Internet-Draft                    NMSF                        April 2026
+
+
+Acknowledgments
+
+   The author would like to thank Will Law for the MSF and CMSF
+   specifications which established the extension pattern that NMSF
+   follows, and the MoQ working group for the transport protocol that
+   makes this work possible.
+
+Author's Address
+
+   Erik Herz
+   Vivoh, Inc.
+   Email: erik@vivoh.com
