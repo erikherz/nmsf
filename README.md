@@ -1,8 +1,8 @@
 # NMSF: Neural Video Codec Packaging for MOQT Streaming Format
 
-**Internet-Draft:** `draft-herz-moq-nmsf-00`
-**Author:** Erik Herz, Vivoh, Inc.
-**Status:** Individual Draft
+**Internet-Draft:** `draft-herz-moq-nmsf-00`\
+**Author:** Erik Herz, Vivoh, Inc.\
+**Status:** Individual Draft\
 **Working Group:** Media Over QUIC (moq)
 
 ## Overview
