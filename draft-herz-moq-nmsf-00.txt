@@ -9,9 +9,10 @@ Expires: 7 October 2026
 
 Abstract
 
-   This document updates [MSF] by defining a new optional feature for
-   the streaming format.  It specifies the syntax and semantics for
-   adding Neural Video Codec (NVC) packaged media to MSF.  NVC codecs
+   This document updates the MOQT Streaming Format (MSF) by defining
+   a new optional feature for the streaming format.  It specifies the
+   syntax and semantics for adding Neural Video Codec (NVC) packaged
+   media to MSF.  NVC codecs
    use learned neural network transforms for video compression, and
    their bitstreams require a distinct packaging model from traditional
    block-based codecs.  NMSF maps neural keyframes (Intra) and delta
@@ -147,9 +148,9 @@ Internet-Draft                    NMSF                        April 2026
    random access.
 
       MSF (base)
-       +-- LOC packaging          (native, [MSF])
-       +-- Media/Event timelines  (native, [MSF])
-       +-- CMSF extension         (adds "cmaf" packaging, [CMSF])
+       +-- LOC packaging          (native, MSF)
+       +-- Media/Event timelines  (native, MSF)
+       +-- CMSF extension         (adds "cmaf" packaging, CMSF)
        +-- NMSF extension         (adds "nvc" packaging, this document)
 
    A single MoQ Broadcast MAY contain tracks using any combination of

@@ -81,9 +81,9 @@
    random access.</t>
       <artwork name="" type="" align="left" alt=""><![CDATA[
    MSF (base)
-    +-- LOC packaging          (native, [MSF])
-    +-- Media/Event timelines  (native, [MSF])
-    +-- CMSF extension         (adds "cmaf" packaging, [CMSF])
+    +-- LOC packaging          (native, MSF)
+    +-- Media/Event timelines  (native, MSF)
+    +-- CMSF extension         (adds "cmaf" packaging, CMSF)
     +-- NMSF extension         (adds "nvc" packaging, this document)
 ]]></artwork>
       <t>
