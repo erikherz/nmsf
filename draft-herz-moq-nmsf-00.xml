@@ -104,13 +104,17 @@
         <name>Object Wire Format</name>
         <t>
    Each MoQ Object payload for a track with "nvc" packaging consists
-   of a fixed 17-byte header followed by a variable-length compressed
+   of a fixed 25-byte header followed by a variable-length compressed
    bitstream:</t>
         <artwork name="" type="" align="left" alt=""><![CDATA[
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |  frame_type   |                 frame_number                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               |                                               |
++-+-+-+-+-+-+-+-+              pts_ms                           +
+|                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |               |                    width                      |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -141,6 +145,19 @@
             <t>
 	absolute sequence number of this frame within the stream,
       starting from zero.
+            </t>
+          </dd>
+          <dt>pts_ms:</dt>
+          <dd>
+            <t>
+	8 bytes, unsigned 64-bit integer, big-endian.  The
+            </t>
+            <t>
+	capture-side wallclock timestamp of this frame in
+      milliseconds since the Unix epoch.  Publishers SHOULD
+      set this to the time the frame was captured or encoded.
+      Subscribers MAY use this field to compute end-to-end
+      latency or to pace frame presentation.
             </t>
           </dd>
           <dt>width:</dt>
