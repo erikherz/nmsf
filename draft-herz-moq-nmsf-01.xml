@@ -1,0 +1,941 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE rfc [
+  <!ENTITY nbsp    "&#160;">
+  <!ENTITY zwsp   "&#8203;">
+  <!ENTITY nbhy   "&#8209;">
+  <!ENTITY wj     "&#8288;">
+]>
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude" submissionType="IETF" docName="draft-herz-moq-nmsf-01" category="info" ipr="trust200902" obsoletes="" updates="" xml:lang="en" symRefs="true" sortRefs="true" tocInclude="true" version="3">
+  <front>
+    <title abbrev="NMSF">NMSF - Neural Video Codec Packaging for MOQT Streaming Format</title>
+    <seriesInfo name="Internet-Draft" value="draft-herz-moq-nmsf-01"/>
+    <author initials="E." surname="Herz" fullname="Erik Herz">
+      <organization>Vivoh, Inc.</organization>
+      <address>
+        <email>erik@vivoh.com</email>
+      </address>
+    </author>
+    <date year="2026" month="April" day="7"/>
+    <workgroup>Media Over QUIC</workgroup>
+    <abstract>
+      <t>
+   This document updates the MOQT Streaming Format (MSF) by defining
+   a new optional feature for the streaming format.  It specifies the
+   syntax and semantics for adding Neural Video Codec (NVC) packaged
+   media to MSF.  NVC codecs use learned neural network transforms for
+   video compression, and their bitstreams require a distinct packaging
+   model from traditional block-based codecs.  NMSF maps neural
+   keyframes (Intra) and delta frames (Inter) onto MoQ Groups and
+   Objects, and introduces a multi-track model that separates
+   hyperprior side information from latent bitstreams for
+   priority-aware delivery.  This enables real-time neural video
+   streaming over any standard MoQ relay.</t>
+    </abstract>
+    <note>
+      <name>About This Document</name>
+      <t>
+   This note is to be removed before publishing as an RFC.</t>
+      <t>
+   Source for this draft and an issue tracker can be found at
+   <eref target="https://github.com/erikherz/nmsf"/>.</t>
+    </note>
+  </front>
+  <middle>
+    <section anchor="sect-1" numbered="true" toc="default">
+      <name>Introduction</name>
+      <t>
+   Neural Video Codecs (NVCs) represent a new class of video
+   compression that uses learned neural network transforms instead of
+   block-based motion estimation and discrete cosine transforms.  NVCs
+   such as DCVC-RT <xref target="DCVC-RT" format="default"/>, SSF, FVC, and RLVC produce compressed
+   bitstreams that differ fundamentally from traditional codecs:</t>
+      <ul spacing="normal">
+        <li>
+          <t>No container format.  NVC bitstreams consist of entropy-coded
+      latent tensors, not fMP4 boxes, LOC containers, or NAL units.</t>
+        </li>
+        <li>
+          <t>Two-layer compression.  NVCs using hyperprior-based entropy
+      coding produce two distinct bitstreams per frame: a small
+      hyperprior containing statistical side information, and a larger
+      latent tensor containing the compressed frame data.  The latent
+      cannot be decoded without the hyperprior.</t>
+        </li>
+        <li>
+          <t>Stateful decoding.  The decoder maintains a learned context
+      buffer (analogous to a decoded picture buffer) that must be
+      initialized from a full neural keyframe before delta frames can
+      be decoded.</t>
+        </li>
+        <li>
+          <t>Variable-rate representations.  Compressed frame sizes vary
+      significantly based on scene complexity, as the codec allocates
+      bits adaptively in a learned feature space.</t>
+        </li>
+      </ul>
+      <t>
+   The existing MSF <xref target="I-D.ietf-moq-msf" format="default"/> packaging types -- LOC and the timeline
+   types -- do not accommodate these bitstreams.  The CMSF <xref target="I-D.ietf-moq-cmsf" format="default"/>
+   extension adds CMAF packaging for traditional block-based codecs.
+   Neither is suitable for NVC data, which has no container structure
+   and requires a different model for keyframe semantics and decoder
+   state management.</t>
+      <t>
+   This document defines NMSF, an MSF extension that adds NVC
+   packaging.  NMSF follows the same extension pattern established by
+   CMSF: it registers a new "packaging" value, defines the Object
+   payload format, and specifies Group-level requirements for decoder
+   random access.  Additionally, NMSF introduces a multi-track model
+   that maps the hyperprior and latent bitstreams to separate MoQ
+   tracks, enabling priority-based relay delivery under congestion.</t>
+      <artwork name="" type="" align="left" alt=""><![CDATA[
+   MSF (base)
+    +-- LOC packaging          (native, MSF)
+    +-- Media/Event timelines  (native, MSF)
+    +-- CMSF extension         (adds "cmaf" packaging, CMSF)
+    +-- NMSF extension         (adds "nvc" packaging, this document)
+]]></artwork>
+      <t>
+   A single MoQ Broadcast MAY contain tracks using any combination of
+   packaging types.  For example, an NVC video track may coexist with
+   a LOC or CMAF audio track in the same catalog.</t>
+    </section>
+    <section anchor="sect-2" numbered="true" toc="default">
+      <name>MSF Extension</name>
+      <t>
+   All of the specifications, requirements, and terminology defined in
+   <xref target="I-D.ietf-moq-msf" format="default"/> apply to implementations of this extension unless explicitly
+   noted otherwise in this document.</t>
+    </section>
+    <section anchor="sect-3" numbered="true" toc="default">
+      <name>NVC Packaging</name>
+      <section anchor="sect-3.1" numbered="true" toc="default">
+        <name>Track Model</name>
+        <t>
+   NVC packaging uses two MoQ tracks per video stream to carry the
+   two layers of the neural codec's compressed output:</t>
+        <dl newline="false" spacing="normal" indent="3">
+          <dt>Hyperprior track:</dt>
+          <dd>
+            <t>
+      Carries the entropy-coded hyperprior (side information) for each
+      frame.  The hyperprior describes the statistical distribution of
+      the latent tensor and is required by the entropy decoder before
+      the latent can be decompressed.  This track is small (typically
+      5-15% of total bitstream) and SHOULD be assigned higher delivery
+      priority than the latent track.
+            </t>
+          </dd>
+          <dt>Latent track:</dt>
+          <dd>
+            <t>
+      Carries the entropy-coded latent tensor (the primary compressed
+      frame data) for each frame.  The latent track is larger and
+      depends on the corresponding hyperprior Object having been
+      received and decoded first.
+            </t>
+          </dd>
+        </dl>
+        <t>
+   Both tracks MUST use "nvc" packaging and belong to the same MoQ
+   Broadcast.  The tracks are linked via a "depends" field in the
+   catalog (<xref target="sect-3.8" format="default"/>).  Objects in the two tracks are
+   correlated by Group sequence number and Object index: Object N in
+   Group G of the hyperprior track corresponds to Object N in Group G
+   of the latent track.</t>
+        <t>
+   This two-track model reflects the inherent two-layer structure of
+   hyperprior-based neural codecs.  It enables MoQ relays to
+   prioritize the small hyperprior track under congestion, ensuring
+   that the decoder can begin latent decompression as soon as latent
+   data arrives.  The relay requires no awareness of the NVC payload
+   format -- standard MoQ priority mechanisms are sufficient.</t>
+        <t>
+   Implementations MAY use a single combined track instead of two
+   separate tracks.  In this case, the payload sub-format defined in
+   <xref target="sect-3.6" format="default"/> carries both bitstreams within each Object.
+   The single-track mode is simpler but loses the ability to
+   prioritize hyperprior delivery independently.</t>
+      </section>
+      <section anchor="sect-3.2" numbered="true" toc="default">
+        <name>Object Wire Format</name>
+        <t>
+   Each MoQ Object payload for a track with "nvc" packaging consists
+   of a fixed 26-byte header followed by a variable-length compressed
+   bitstream:</t>
+        <artwork name="" type="" align="left" alt=""><![CDATA[
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  frame_type   |      qp       |         frame_number          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                               |                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+           pts_ms               +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               |                    width                      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               |                    height                     |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               |                 payload_len                   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               |                                               |
++-+-+-+-+-+-+-+-+          payload (variable)                   +
+|                                                               |
++---------------------------------------------------------------+
+]]></artwork>
+        <dl newline="false" spacing="normal" indent="3">
+          <dt>frame_type:</dt>
+          <dd>
+            <t>
+      1 byte.  The type of neural video frame contained in this
+      Object.  See <xref target="sect-3.3" format="default"/>.
+            </t>
+          </dd>
+          <dt>qp:</dt>
+          <dd>
+            <t>
+      1 byte, unsigned 8-bit integer.  The quality parameter index
+      used for encoding this frame.  Identifies the rate-distortion
+      operating point from the codec's trained quality levels.  The
+      decoder MUST use the same QP index to select matching
+      quantization step sizes.  Values 0-63 are defined; values
+      64-255 are reserved.
+            </t>
+          </dd>
+          <dt>frame_number:</dt>
+          <dd>
+            <t>
+      4 bytes, unsigned 32-bit integer, big-endian.  The absolute
+      sequence number of this frame within the stream, starting
+      from zero.
+            </t>
+          </dd>
+          <dt>pts_ms:</dt>
+          <dd>
+            <t>
+      8 bytes, unsigned 64-bit integer, big-endian.  The
+      capture-side wallclock timestamp in milliseconds since the
+      Unix epoch (1970-01-01T00:00:00Z).  This timestamp is set by
+      the publisher at the time of frame capture and is carried
+      through the relay unmodified.  Subscribers MAY use the
+      difference between pts_ms and their local wallclock to
+      estimate end-to-end latency.  A value of zero indicates that
+      no timestamp is available.
+            </t>
+          </dd>
+          <dt>width:</dt>
+          <dd>
+            <t>
+      4 bytes, unsigned 32-bit integer, big-endian.  The frame
+      width in pixels.
+            </t>
+          </dd>
+          <dt>height:</dt>
+          <dd>
+            <t>
+      4 bytes, unsigned 32-bit integer, big-endian.  The frame
+      height in pixels.
+            </t>
+          </dd>
+          <dt>payload_len:</dt>
+          <dd>
+            <t>
+      4 bytes, unsigned 32-bit integer, big-endian.  The byte
+      length of the payload field that follows.
+            </t>
+          </dd>
+          <dt>payload:</dt>
+          <dd>
+            <t>
+      Variable length.  The NVC compressed bitstream for this
+      frame.  In two-track mode, the hyperprior track carries the
+      hyperprior bitstream and the latent track carries the latent
+      bitstream.  In single-track mode, this field carries the
+      combined payload defined in <xref target="sect-3.6" format="default"/>.
+            </t>
+          </dd>
+        </dl>
+      </section>
+      <section anchor="sect-3.3" numbered="true" toc="default">
+        <name>Frame Types</name>
+        <t>
+   The frame_type field identifies the role of the frame in the neural
+   codec's prediction structure:</t>
+        <figure anchor="tbl-frame-types">
+          <artwork name="" type="" align="left" alt=""><![CDATA[
+           +=========+========+========================+
+           |  Value  |  Type  | Description            |
+           +=========+========+========================+
+           |  0x00   | Intra  | Neural keyframe.       |
+           |         |        | Decoder initializes    |
+           |         |        | its context buffer     |
+           |         |        | from this frame. MUST  |
+           |         |        | be the first Object in |
+           |         |        | a Group.               |
+           +---------+--------+------------------------+
+           |  0x01   | Inter  | Neural delta frame.    |
+           |         |        | Decoder uses context   |
+           |         |        | buffer from previous   |
+           |         |        | reconstructed frame.   |
+           +---------+--------+------------------------+
+           | 0x02-FF |  Rsvd  | Reserved for future    |
+           |         |        | use.                   |
+           +---------+--------+------------------------+
+]]></artwork>
+        </figure>
+        <t>
+   Intra frames are analogous to SAP Type 1 access points in CMAF.
+   They enable random access by fully initializing the decoder's
+   context buffer without dependence on any prior frame.</t>
+        <t>
+   Inter frames are analogous to non-SAP frames (P-frames).  They
+   depend on the decoder's context buffer, which contains the
+   reconstructed output of the immediately preceding frame.</t>
+        <t>
+   Unlike traditional codecs with multi-frame reference picture
+   buffers, current NVCs maintain a single context buffer containing
+   learned features from the previous reconstructed frame.  The
+   reserved range (0x02-0xFF) accommodates future NVCs that may
+   introduce bidirectional prediction, hierarchical quality layers,
+   or multi-reference architectures.</t>
+      </section>
+      <section anchor="sect-3.4" numbered="true" toc="default">
+        <name>Object Packaging</name>
+        <t>
+   The payload of each Object is subject to the following requirements:</t>
+        <ul spacing="normal">
+          <li>
+            <t>MUST contain exactly one NVC frame (or frame component, in
+      two-track mode) in the wire format defined in
+      <xref target="sect-3.2" format="default"/>.</t>
+          </li>
+          <li>
+            <t>MUST NOT span multiple frames.  Each frame is carried in a
+      separate Object per track.</t>
+          </li>
+          <li>
+            <t>Objects within a Group MUST be sequentially ordered by
+      frame_number.  Out-of-order processing causes encoder-decoder
+      context buffer divergence.</t>
+          </li>
+          <li>
+            <t>In two-track mode, the hyperprior Object and the
+      corresponding latent Object for the same frame MUST have
+      identical frame_type, qp, frame_number, pts_ms, width, and
+      height header values.</t>
+          </li>
+        </ul>
+      </section>
+      <section anchor="sect-3.5" numbered="true" toc="default">
+        <name>Group Packaging</name>
+        <t>
+   Each MOQT Group:</t>
+        <ul spacing="normal">
+          <li>
+            <t>MUST begin with an Object containing an Intra frame
+      (frame_type = 0x00).</t>
+          </li>
+          <li>
+            <t>MUST contain one contiguous Group of Pictures (GOP): one Intra
+      frame followed by zero or more Inter frames.</t>
+          </li>
+          <li>
+            <t>The Group boundary aligns with the publisher's neural GOP
+      boundary.  Typical GOP sizes are 30-120 frames (1-4 seconds
+      at 30 fps).</t>
+          </li>
+          <li>
+            <t>In two-track mode, both the hyperprior and latent tracks MUST
+      use the same Group sequence numbers and contain the same number
+      of Objects per Group.</t>
+          </li>
+        </ul>
+        <t>
+   This structure ensures that a subscriber joining mid-stream or
+   recovering from loss can begin decoding from the next Group
+   boundary.  The Intra frame at the start of each Group fully
+   initializes the decoder context buffer, enabling immediate
+   playback without waiting for a future keyframe.</t>
+      </section>
+      <section anchor="sect-3.6" numbered="true" toc="default">
+        <name>Payload Format</name>
+        <t>
+   In two-track mode, each track's payload contains a single
+   bitstream component:</t>
+        <ul spacing="normal">
+          <li>
+            <t>Hyperprior track payload: the entropy-coded hyperprior tensor
+      z, preceded by tensor shape metadata.</t>
+          </li>
+          <li>
+            <t>Latent track payload: the entropy-coded latent tensor y,
+      preceded by tensor shape metadata.</t>
+          </li>
+        </ul>
+        <t>
+   Each payload component uses this sub-format:</t>
+        <artwork name="" type="" align="left" alt=""><![CDATA[
+   Offset  Size      Field
+   ------  --------  -----
+    0       4 bytes  channels       (uint32, big-endian)
+    4       4 bytes  height         (uint32, big-endian)
+    8       4 bytes  width          (uint32, big-endian)
+   12       4 bytes  data_len       (uint32, big-endian)
+   16       N bytes  data           (entropy-coded tensor)
+]]></artwork>
+        <t>
+   The channels, height, and width fields describe the spatial
+   dimensions of the tensor prior to entropy coding.  These are
+   required by the decoder to allocate output buffers and configure
+   the entropy decoder.</t>
+        <t>
+   In single-track mode, the payload carries both components
+   concatenated: the hyperprior component followed immediately by
+   the latent component, using the same sub-format for each.</t>
+      </section>
+      <section anchor="sect-3.7" numbered="true" toc="default">
+        <name>Catalog: NVC Packaging Type</name>
+        <t>
+   This specification extends the allowed packaging values defined in
+   <xref target="I-D.ietf-moq-msf" format="default"/> to include one new entry:</t>
+        <figure anchor="tbl-packaging">
+          <artwork name="" type="" align="left" alt=""><![CDATA[
+                    +======+=======+===========+
+                    | Name | Value | Reference |
+                    +======+=======+===========+
+                    | NVC  | nvc   | This RFC  |
+                    +------+-------+-----------+
+]]></artwork>
+        </figure>
+        <t>
+   Every Track entry in an MSF catalog carrying NVC-packaged media
+   data MUST declare a "packaging" type value of "nvc".</t>
+      </section>
+      <section anchor="sect-3.8" numbered="true" toc="default">
+        <name>Catalog: NVC Track Fields</name>
+        <t>
+   This specification adds the following track-level catalog fields
+   for tracks with "nvc" packaging:</t>
+        <figure anchor="tbl-track-fields">
+          <artwork name="" type="" align="left" alt=""><![CDATA[
++============+===========+==========+============================+
+| Field      | JSON Type | Required | Definition                 |
++============+===========+==========+============================+
+| codec      | String    | Yes      | NVC codec identifier.      |
+|            |           |          | See Section 5.             |
++------------+-----------+----------+----------------------------+
+| colorspace | String    | Yes      | Input colorspace (e.g.,    |
+|            |           |          | "ycbcr-bt709").            |
++------------+-----------+----------+----------------------------+
+| gopSize    | Number    | Yes      | Number of frames per       |
+|            |           |          | Group (GOP size).          |
++------------+-----------+----------+----------------------------+
+| nvcRole    | String    | Yes (2T) | Track role in two-track    |
+|            |           |          | mode: "hyperprior" or      |
+|            |           |          | "latent". Omitted in       |
+|            |           |          | single-track mode.         |
++------------+-----------+----------+----------------------------+
+| depends    | String    | Cond.    | Name of the track this     |
+|            |           |          | track depends on. REQUIRED |
+|            |           |          | for latent tracks          |
+|            |           |          | (nvcRole="latent").        |
++------------+-----------+----------+----------------------------+
+| priority   | Number    | No       | Delivery priority hint.    |
+|            |           |          | Lower values = higher      |
+|            |           |          | priority. Hyperprior       |
+|            |           |          | tracks SHOULD use a lower  |
+|            |           |          | value than latent tracks.  |
++------------+-----------+----------+----------------------------+
+| nvc        | Object    | No       | Codec-specific metadata.   |
+|            |           |          | See Section 3.9.           |
++------------+-----------+----------+----------------------------+
+]]></artwork>
+        </figure>
+        <t>
+   The standard MSF track fields "name", "packaging", "isLive",
+   "width", "height", and "framerate" retain their definitions from
+   <xref target="I-D.ietf-moq-msf" format="default"/> and are REQUIRED for NVC tracks.</t>
+      </section>
+      <section anchor="sect-3.9" numbered="true" toc="default">
+        <name>Catalog: NVC Metadata Object</name>
+        <t>
+   The optional "nvc" object within a track catalog entry carries
+   codec-specific metadata that a subscriber may need to configure
+   its decoder:</t>
+        <figure anchor="tbl-nvc-metadata">
+          <artwork name="" type="" align="left" alt=""><![CDATA[
++================+===========+==================================+
+| Field          | JSON Type | Description                      |
++================+===========+==================================+
+| modelVersion   | String    | Model checkpoint version         |
+|                |           | identifier.                      |
++----------------+-----------+----------------------------------+
+| entropyFormat  | String    | Entropy coding format (e.g.,     |
+|                |           | "rans64", "arithmetic").          |
++----------------+-----------+----------------------------------+
+| latentChannels | Number    | Channel count of the latent      |
+|                |           | tensor.                          |
++----------------+-----------+----------------------------------+
+| hyperChannels  | Number    | Channel count of the hyperprior  |
+|                |           | tensor.                          |
++----------------+-----------+----------------------------------+
+| quantParams    | Object    | Codec-specific quantization      |
+|                |           | parameters.                      |
++----------------+-----------+----------------------------------+
+]]></artwork>
+        </figure>
+        <t>
+   Subscribers that do not recognize the "codec" value or cannot
+   satisfy the metadata requirements SHOULD NOT subscribe to the
+   track.</t>
+      </section>
+    </section>
+    <section anchor="sect-4" numbered="true" toc="default">
+      <name>Decoder Requirements</name>
+      <t>
+   This section specifies the behavior required of an NMSF decoder.
+   These requirements ensure that encoder and decoder context buffers
+   remain synchronized, preventing visual artifacts caused by state
+   drift.</t>
+      <section anchor="sect-4.1" numbered="true" toc="default">
+        <name>Context Buffer Management</name>
+        <t>
+   The decoder MUST maintain a context buffer containing the
+   reconstructed output of the most recently decoded frame.  This
+   buffer is used as input to the synthesis transform when decoding
+   Inter frames.</t>
+        <t>
+   The context buffer is uninitialized when the decoder starts.  The
+   decoder MUST NOT attempt to decode Inter frames until it has
+   successfully decoded an Intra frame.</t>
+        <t>
+   After decoding each frame (Intra or Inter), the decoder MUST
+   replace its context buffer with the newly reconstructed output.
+   Failure to update the context buffer causes progressive drift
+   between encoder and decoder state, manifesting as visual artifacts
+   commonly described as "ghosting" or "smearing."</t>
+      </section>
+      <section anchor="sect-4.2" numbered="true" toc="default">
+        <name>Two-Track Decode Sequence</name>
+        <t>
+   When operating in two-track mode, the decoder MUST process frames
+   in the following order for each frame N in Group G:</t>
+        <ol spacing="normal" type="1">
+          <li><t>Receive Object N from the hyperprior track (Group G).</t></li>
+          <li><t>Decode the hyperprior to obtain CDF parameters for the
+      entropy decoder.</t></li>
+          <li><t>Receive Object N from the latent track (Group G).</t></li>
+          <li><t>Entropy-decode the latent tensor using the CDF parameters
+      from step 2.</t></li>
+          <li><t>Run the synthesis transform (Intra or Inter path) to
+      produce the reconstructed frame.</t></li>
+          <li><t>Update the context buffer with the reconstructed frame.</t></li>
+        </ol>
+        <t>
+   The decoder MAY begin receiving the latent Object before the
+   hyperprior decode is complete, but MUST NOT begin entropy decoding
+   the latent until the hyperprior CDF parameters are available.</t>
+      </section>
+      <section anchor="sect-4.3" numbered="true" toc="default">
+        <name>Intra Frame Handling</name>
+        <t>
+   When the decoder receives an Intra frame (frame_type = 0x00):</t>
+        <ol spacing="normal" type="1">
+          <li><t>Discard any existing context buffer.</t></li>
+          <li><t>Decode the frame using only the payload data (no context).</t></li>
+          <li><t>Store the reconstructed output as the new context buffer.</t></li>
+          <li><t>Output the reconstructed frame for display.</t></li>
+        </ol>
+      </section>
+      <section anchor="sect-4.4" numbered="true" toc="default">
+        <name>Inter Frame Handling</name>
+        <t>
+   When the decoder receives an Inter frame (frame_type = 0x01):</t>
+        <ol spacing="normal" type="1">
+          <li>
+            <t>Verify that a context buffer exists (i.e., an Intra frame has
+       been previously decoded).  If not, discard the frame.</t>
+          </li>
+          <li>
+            <t>Decode the frame using the payload AND the current context
+       buffer.</t>
+          </li>
+          <li>
+            <t>Replace the context buffer with the newly reconstructed output.</t>
+          </li>
+          <li>
+            <t>Output the reconstructed frame for display.</t>
+          </li>
+        </ol>
+      </section>
+      <section anchor="sect-4.5" numbered="true" toc="default">
+        <name>Stream Join and Recovery</name>
+        <t>
+   When a subscriber joins a stream mid-session or recovers from
+   packet loss:</t>
+        <ol spacing="normal" type="1">
+          <li><t>Wait for the start of the next MoQ Group.</t></li>
+          <li><t>The first Object in the Group is an Intra frame.</t></li>
+          <li><t>Decode the Intra frame to initialize the context buffer.</t></li>
+          <li><t>Continue decoding subsequent Inter frames normally.</t></li>
+        </ol>
+        <t>Objects received before the first Intra frame MUST be discarded.</t>
+        <t>In two-track mode, the subscriber MUST subscribe to both the
+   hyperprior and latent tracks.  Subscribing to the latent track
+   alone is insufficient, as the latent cannot be decoded without
+   the hyperprior CDF parameters.</t>
+      </section>
+      <section anchor="sect-4.6" numbered="true" toc="default">
+        <name>Encoder Context Synchronization</name>
+        <t>
+   The encoder MUST maintain its own context buffer that mirrors the
+   decoder's state.  After encoding each frame, the encoder MUST run
+   the synthesis (decoding) transform on the quantized latent
+   representation to produce a reconstructed frame, and use that
+   reconstructed frame as the context for encoding the next frame.</t>
+        <t>
+   This "encode-decode loop" ensures that the encoder's context buffer
+   contains exactly the same data that a decoder would produce from
+   the transmitted bitstream, preventing encoder-decoder state drift.</t>
+      </section>
+    </section>
+    <section anchor="sect-5" numbered="true" toc="default">
+      <name>Codec Registration</name>
+      <t>
+   The "codec" field in the catalog identifies which NVC is used:</t>
+      <figure anchor="tbl-codecs">
+        <artwork name="" type="" align="left" alt=""><![CDATA[
++===========+==========================================+===========+
+| Value     | Full Name                                | Reference |
++===========+==========================================+===========+
+| dcvc-rt   | Deep Contextual Video Compression -      | [DCVC-RT] |
+|           | Real Time                                |           |
++-----------+------------------------------------------+-----------+
+| dcvc-fm   | DCVC Feature Modulation                  |           |
++-----------+------------------------------------------+-----------+
+| dcvc-dc   | DCVC Data Conditions                     |           |
++-----------+------------------------------------------+-----------+
+| ssf       | Scale-Space Flow                         |           |
++-----------+------------------------------------------+-----------+
+| fvc       | Feature-space Video Coding               |           |
++-----------+------------------------------------------+-----------+
+| rlvc      | Recurrent Learned Video Compression      |           |
++-----------+------------------------------------------+-----------+
+| elfvc     | Efficient Learned Flexible Video Coding   |           |
++-----------+------------------------------------------+-----------+
+]]></artwork>
+      </figure>
+      <t>New NVC codecs are compatible with NMSF packaging if they produce
+   distinct Intra and Inter frame types and use a single sequential
+   context buffer.  Registration requires choosing a unique codec
+   identifier string and documenting the payload sub-format
+   (<xref target="sect-3.6" format="default"/>).  No changes to the wire format header
+   (<xref target="sect-3.2" format="default"/>) are required for new codecs.</t>
+    </section>
+    <section anchor="sect-6" numbered="true" toc="default">
+      <name>Catalog Examples</name>
+      <t>
+   The following section provides non-normative JSON examples of
+   catalogs compliant with this draft.</t>
+      <section anchor="sect-6.1" numbered="true" toc="default">
+        <name>Two-track NVC video with LOC audio</name>
+        <t>
+   This example shows a catalog for a live broadcast with DCVC-RT
+   neural video using the two-track model (hyperprior + latent) and
+   one Opus audio track using MSF's native LOC packaging.</t>
+        <artwork name="" type="" align="left" alt=""><![CDATA[
+{
+  "version": 1,
+  "streamingFormat": 1,
+  "streamingFormatVersion": "0.2",
+  "tracks": [
+    {
+      "name": "video-hyper",
+      "packaging": "nvc",
+      "isLive": true,
+      "codec": "dcvc-rt",
+      "nvcRole": "hyperprior",
+      "priority": 1,
+      "width": 1280,
+      "height": 720,
+      "framerate": 30,
+      "colorspace": "ycbcr-bt709",
+      "gopSize": 60,
+      "nvc": {
+        "modelVersion": "cvpr2025",
+        "entropyFormat": "rans64",
+        "hyperChannels": 128
+      }
+    },
+    {
+      "name": "video-latent",
+      "packaging": "nvc",
+      "isLive": true,
+      "codec": "dcvc-rt",
+      "nvcRole": "latent",
+      "depends": "video-hyper",
+      "priority": 2,
+      "width": 1280,
+      "height": 720,
+      "framerate": 30,
+      "colorspace": "ycbcr-bt709",
+      "gopSize": 60,
+      "nvc": {
+        "modelVersion": "cvpr2025",
+        "entropyFormat": "rans64",
+        "latentChannels": 128
+      }
+    },
+    {
+      "name": "audio",
+      "packaging": "loc",
+      "isLive": true,
+      "codec": "opus",
+      "role": "audio",
+      "samplerate": 48000,
+      "channelConfig": "2",
+      "bitrate": 128000
+    }
+  ]
+}
+]]></artwork>
+      </section>
+      <section anchor="sect-6.2" numbered="true" toc="default">
+        <name>Single-track NVC video (compact mode)</name>
+        <t>
+   This example shows a catalog using single-track mode, where the
+   hyperprior and latent are combined in a single payload.  This
+   mode is simpler but does not support independent priority control.</t>
+        <artwork name="" type="" align="left" alt=""><![CDATA[
+{
+  "version": 1,
+  "tracks": [
+    {
+      "name": "video",
+      "packaging": "nvc",
+      "isLive": true,
+      "codec": "dcvc-rt",
+      "width": 1280,
+      "height": 720,
+      "framerate": 30,
+      "colorspace": "ycbcr-bt709",
+      "gopSize": 60,
+      "nvc": {
+        "modelVersion": "cvpr2025",
+        "entropyFormat": "rans64",
+        "latentChannels": 128,
+        "hyperChannels": 128
+      }
+    },
+    {
+      "name": "audio",
+      "packaging": "cmaf",
+      "isLive": true,
+      "initData": "AAAAIGZ0eXBpc281AAA...AAAAAAAAAA",
+      "codec": "mp4a.40.2",
+      "role": "audio",
+      "samplerate": 48000,
+      "channelConfig": "2",
+      "bitrate": 128000
+    }
+  ]
+}
+]]></artwork>
+      </section>
+    </section>
+    <section anchor="sect-7" numbered="true" toc="default">
+      <name>Conventions and Definitions</name>
+      <t>
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 <xref target="RFC2119" format="default"/> <xref target="RFC8174" format="default"/> when, and only when, they appear in all
+   capitals, as shown here.</t>
+    </section>
+    <section anchor="sect-8" numbered="true" toc="default">
+      <name>Security Considerations</name>
+      <t>
+   NMSF relies on the security properties of MoQ Transport
+   <xref target="I-D.ietf-moq-transport" format="default"/>, which provides confidentiality and integrity via
+   QUIC's TLS 1.3 encryption.  NMSF does not add its own integrity
+   or authentication mechanisms.</t>
+      <t>
+   The "payload_len" field permits payloads up to 4 GiB.  Decoders
+   SHOULD enforce a maximum payload size appropriate for their
+   deployment environment (e.g., 100 MiB for 4K video) and reject
+   Objects exceeding that limit to mitigate resource exhaustion.</t>
+      <t>
+   A malicious publisher could craft Intra frames that cause the
+   decoder's context buffer to enter a state producing misleading
+   visual output on subsequent Inter frames.  This is analogous to
+   reference picture manipulation in traditional codecs and is
+   mitigated by the same trust model: subscribers SHOULD only
+   connect to authenticated and authorized publishers.</t>
+      <t>
+   Neural video codec model weights are typically large (tens to
+   hundreds of megabytes) and are NOT transmitted via MoQ.  Both
+   publisher and subscriber must have compatible model weights
+   pre-installed.  The "nvc" catalog metadata (<xref target="sect-3.9" format="default"/>)
+   enables version negotiation, but the secure distribution of model
+   weights is outside the scope of this document.</t>
+      <t>
+   The pts_ms timestamp reveals the publisher's wallclock time,
+   which may be a privacy concern in some deployments.  Publishers
+   MAY set pts_ms to zero to suppress timestamp information.</t>
+    </section>
+    <section anchor="sect-9" numbered="true" toc="default">
+      <name>IANA Considerations</name>
+      <t>
+   This document requests registration of a new packaging type value
+   "nvc" in the MSF packaging registry defined by <xref target="I-D.ietf-moq-msf" format="default"/>.</t>
+      <t>
+   This document requests creation of an "NVC Codec Identifiers"
+   registry with the initial values defined in <xref target="tbl-codecs" format="default"/>.
+   New entries require Specification Required registration policy.</t>
+    </section>
+  </middle>
+  <back>
+    <references>
+      <name>References</name>
+      <references>
+        <name>Normative References</name>
+        <reference anchor="I-D.ietf-moq-msf" target="https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00" xml:base="https://bib.ietf.org/public/rfc/bibxml3/reference.I-D.ietf-moq-msf.xml">
+          <front>
+            <title>MOQT Streaming Format</title>
+            <author fullname="Will Law" initials="W." surname="Law">
+              <organization>Akamai</organization>
+            </author>
+            <date day="19" month="January" year="2026"/>
+            <abstract>
+              <t>This document specifies the MOQT Streaming Format, designed to operate on Media Over QUIC Transport.</t>
+            </abstract>
+          </front>
+          <seriesInfo name="Internet-Draft" value="draft-ietf-moq-msf-00"/>
+        </reference>
+        <reference anchor="I-D.ietf-moq-cmsf" target="https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00" xml:base="https://bib.ietf.org/public/rfc/bibxml3/reference.I-D.ietf-moq-cmsf.xml">
+          <front>
+            <title>CMSF- a CMAF compliant implementation of MOQT Streaming Format</title>
+            <author fullname="Will Law" initials="W." surname="Law">
+              <organization>Akamai</organization>
+            </author>
+            <date day="1" month="December" year="2025"/>
+            <abstract>
+              <t>This document updates [MSF] by defining a new optional feature for the streaming format. It specifies the syntax and semantics for adding CMAF-packaged media [CMAF] to MSF.</t>
+            </abstract>
+          </front>
+          <seriesInfo name="Internet-Draft" value="draft-ietf-moq-cmsf-00"/>
+        </reference>
+        <reference anchor="I-D.ietf-moq-transport" target="https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-17" xml:base="https://bib.ietf.org/public/rfc/bibxml3/reference.I-D.ietf-moq-transport.xml">
+          <front>
+            <title>Media over QUIC Transport</title>
+            <author fullname="Suhas Nandakumar" initials="S." surname="Nandakumar">
+              <organization>Cisco</organization>
+            </author>
+            <author fullname="Victor Vasiliev" initials="V." surname="Vasiliev">
+              <organization>Google</organization>
+            </author>
+            <author fullname="Ian Swett" initials="I." surname="Swett">
+              <organization>Google</organization>
+            </author>
+            <author fullname="Alan Frindell" initials="A." surname="Frindell">
+              <organization>Meta</organization>
+            </author>
+            <date day="2" month="March" year="2026"/>
+            <abstract>
+              <t>This document defines the core behavior for Media over QUIC Transport (MOQT), a media transport protocol designed to operate over QUIC and WebTransport, which have similar functionality. MOQT allows a producer of media to publish data and have it consumed via subscription by a multiplicity of endpoints. It supports intermediate content distribution networks and is designed for high scale and low latency distribution.</t>
+            </abstract>
+          </front>
+          <seriesInfo name="Internet-Draft" value="draft-ietf-moq-transport-17"/>
+        </reference>
+        <reference anchor="RFC2119" target="https://www.rfc-editor.org/info/rfc2119" xml:base="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.2119.xml">
+          <front>
+            <title>Key words for use in RFCs to Indicate Requirement Levels</title>
+            <author fullname="S. Bradner" initials="S." surname="Bradner"/>
+            <date month="March" year="1997"/>
+            <abstract>
+              <t>In many standards track documents several words are used to signify the requirements in the specification. These words are often capitalized. This document defines these words as they should be interpreted in IETF documents. This document specifies an Internet Best Current Practices for the Internet Community, and requests discussion and suggestions for improvements.</t>
+            </abstract>
+          </front>
+          <seriesInfo name="BCP" value="14"/>
+          <seriesInfo name="RFC" value="2119"/>
+          <seriesInfo name="DOI" value="10.17487/RFC2119"/>
+        </reference>
+        <reference anchor="RFC8174" target="https://www.rfc-editor.org/info/rfc8174" xml:base="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8174.xml">
+          <front>
+            <title>Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words</title>
+            <author fullname="B. Leiba" initials="B." surname="Leiba"/>
+            <date month="May" year="2017"/>
+            <abstract>
+              <t>RFC 2119 specifies common key words that may be used in protocol specifications. This document aims to reduce the ambiguity by clarifying that only UPPERCASE usage of the key words have the defined special meanings.</t>
+            </abstract>
+          </front>
+          <seriesInfo name="BCP" value="14"/>
+          <seriesInfo name="RFC" value="8174"/>
+          <seriesInfo name="DOI" value="10.17487/RFC8174"/>
+        </reference>
+      </references>
+      <references>
+        <name>Informative References</name>
+        <reference anchor="DCVC-RT" target="https://arxiv.org/abs/2502.20762">
+          <front>
+            <title>Towards Practical Real-Time Neural Video Compression</title>
+            <author>
+              <organization>Microsoft Research</organization>
+            </author>
+            <date year="2025"/>
+          </front>
+          <seriesInfo name="CVPR" value="2025"/>
+        </reference>
+        <reference anchor="CompressAI" target="https://github.com/InterDigitalInc/CompressAI">
+          <front>
+            <title>CompressAI: A PyTorch Library and Evaluation Platform for End-to-end Compression Research</title>
+            <author>
+              <organization>InterDigital</organization>
+            </author>
+            <date/>
+          </front>
+        </reference>
+        <reference anchor="BT.709">
+          <front>
+            <title>Parameter values for the HDTV standards for production and international programme exchange</title>
+            <author>
+              <organization>ITU-R</organization>
+            </author>
+            <date month="June" year="2015"/>
+          </front>
+          <seriesInfo name="Recommendation" value="BT.709-6"/>
+        </reference>
+      </references>
+    </references>
+    <section numbered="false" anchor="acknowledgments" toc="default">
+      <name>Acknowledgments</name>
+      <t>
+   The author would like to thank Will Law for the MSF and CMSF
+   specifications which established the extension pattern that NMSF
+   follows, and the MoQ working group for the transport protocol that
+   makes this work possible.</t>
+    </section>
+    <section numbered="false" anchor="changes" toc="default">
+      <name>Changes from draft-herz-moq-nmsf-00</name>
+      <ul spacing="normal">
+        <li><t>Added two-track model: separate hyperprior and latent MoQ
+    tracks with dependency and priority signaling (Section 3.1).</t></li>
+        <li><t>Added per-frame PTS timestamp (pts_ms) to the wire format
+    header for end-to-end latency measurement (Section 3.2).</t></li>
+        <li><t>Added per-frame quality parameter (qp) to the wire format
+    header for rate-distortion signaling (Section 3.2).</t></li>
+        <li><t>Wire format header expanded from 17 bytes to 26 bytes.</t></li>
+        <li><t>Added nvcRole, depends, and priority catalog fields for
+    two-track mode (Section 3.8).</t></li>
+        <li><t>Added two-track decode sequence to decoder requirements
+    (Section 4.2).</t></li>
+        <li><t>Retained single-track mode as a simpler alternative.</t></li>
+        <li><t>Added privacy consideration for pts_ms timestamp
+    (Section 8).</t></li>
+        <li><t>Normalized payload sub-format with explicit tensor shape
+    metadata preceding each bitstream component (Section 3.6).</t></li>
+      </ul>
+    </section>
+  </back>
+</rfc>
