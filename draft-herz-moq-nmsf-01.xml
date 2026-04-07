@@ -170,7 +170,7 @@
 |  frame_type   |      qp       |         frame_number          |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                               |                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+           pts_ms               +
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+           pts_ms              +
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |               |                    width                      |
@@ -472,7 +472,7 @@
 |                |           | identifier.                      |
 +----------------+-----------+----------------------------------+
 | entropyFormat  | String    | Entropy coding format (e.g.,     |
-|                |           | "rans64", "arithmetic").          |
+|                |           | "rans64", "arithmetic").         |
 +----------------+-----------+----------------------------------+
 | latentChannels | Number    | Channel count of the latent      |
 |                |           | tensor.                          |
@@ -622,7 +622,7 @@
 +-----------+------------------------------------------+-----------+
 | rlvc      | Recurrent Learned Video Compression      |           |
 +-----------+------------------------------------------+-----------+
-| elfvc     | Efficient Learned Flexible Video Coding   |           |
+| elfvc     | Efficient Learned Flexible Video Coding  |           |
 +-----------+------------------------------------------+-----------+
 ]]></artwork>
       </figure>
