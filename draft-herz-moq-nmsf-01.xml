@@ -56,7 +56,8 @@
         </li>
         <li>
           <t>Two-layer compression.  NVCs using hyperprior-based entropy
-      coding produce two distinct bitstreams per frame: a small
+      coding (such as those built on <xref target="CompressAI" format="default"/>)
+      produce two distinct bitstreams per frame: a small
       hyperprior containing statistical side information, and a larger
       latent tensor containing the compressed frame data.  The latent
       cannot be decoded without the hyperprior.</t>
